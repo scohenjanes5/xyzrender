@@ -291,7 +291,26 @@ def render_rotation_gif(
 
     # PCA: apply once to initial positions so GIF matches static SVG orientation
     if config.auto_orient:
-        _orient_graph(graph, pca_matrix(np.array([graph.nodes[n]["position"] for n in nodes])))
+        _pca_pos = np.array([graph.nodes[n]["position"] for n in nodes])
+        _pca_centroid = _pca_pos.mean(axis=0)
+        _pca_vt = pca_matrix(_pca_pos)
+        _orient_graph(graph, _pca_vt)
+        if config.vectors:
+            import copy as _cp
+            config = _cp.copy(config)
+            _o = np.array([va.origin for va in config.vectors])
+            _d = np.array([va.vector for va in config.vectors])
+            new_vecs = []
+            for va, o, d in zip(
+                config.vectors,
+                (_pca_vt @ (_o - _pca_centroid).T).T,
+                (_pca_vt @ _d.T).T,
+            ):
+                nv = _cp.copy(va)
+                nv.origin = o
+                nv.vector = d
+                new_vecs.append(nv)
+            config.vectors = new_vecs
 
     original_positions = {n: graph.nodes[n]["position"] for n in nodes}
 
@@ -329,6 +348,14 @@ def render_rotation_gif(
     axis_vec, axis_sign = _rotation_axis(axis)
     step = 360.0 / n_frames
     logger.info("Rendering rotation GIF (%d frames, axis=%s)", n_frames, axis)
+
+    # Save pre-rotation vector data so each frame applies a fresh rotation (no drift).
+    _gif_vec_origins = np.array([va.origin for va in rot_cfg.vectors]) if rot_cfg.vectors else None
+    _gif_vec_dirs = np.array([va.vector for va in rot_cfg.vectors]) if rot_cfg.vectors else None
+    _gif_vec_centroid = (
+        np.mean(list(original_positions.values()), axis=0) if _gif_vec_origins is not None else None
+    )
+
     pngs = []
     for frame_idx in range(n_frames):
         for n in nodes:
@@ -336,17 +363,24 @@ def render_rotation_gif(
 
         apply_axis_angle_rotation(graph, axis_vec, axis_sign * step * frame_idx)
 
+        frame_cfg = rot_cfg
+        if _gif_vec_origins is not None:
+            rot_mat = _axis_angle_matrix(axis_vec, axis_sign * step * frame_idx)
+            frame_cfg = _rotate_vectors_in_cfg(
+                rot_cfg, rot_mat, _gif_vec_centroid, _gif_vec_origins, _gif_vec_dirs
+            )
+
         if mo_data is not None:
             from xyzrender.mo import recompute_mo
 
-            recompute_mo(graph, rot_cfg, mo_data)
+            recompute_mo(graph, frame_cfg, mo_data)
 
         if dens_data is not None:
             from xyzrender.dens import recompute_dens
 
-            recompute_dens(graph, rot_cfg, dens_data)
+            recompute_dens(graph, frame_cfg, dens_data)
 
-        svg = render_svg(graph, rot_cfg, _log=False)
+        svg = render_svg(graph, frame_cfg, _log=False)
         pngs.append(_svg_to_png(svg, config.canvas_size))
         _progress(frame_idx + 1, n_frames)
 
@@ -480,6 +514,44 @@ def _fixed_viewport(frames: list[dict], config: RenderConfig, rotation_axis: np.
     return cfg
 
 
+def _axis_angle_matrix(axis: np.ndarray, angle_deg: float) -> np.ndarray:
+    """Rodrigues rotation matrix for *axis* (unit vector) and *angle_deg* (degrees)."""
+    theta = np.radians(angle_deg)
+    k = axis / np.linalg.norm(axis)
+    c, s = np.cos(theta), np.sin(theta)
+    kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return c * np.eye(3) + s * kx + (1 - c) * np.outer(k, k)
+
+
+def _rotate_vectors_in_cfg(
+    cfg: "RenderConfig",
+    rot: np.ndarray,
+    centroid: np.ndarray,
+    src_origins: np.ndarray,
+    src_dirs: np.ndarray,
+) -> "RenderConfig":
+    """Return a shallow copy of *cfg* with vector arrows rotated by *rot* around
+    *centroid*.
+
+    Uses *src_origins* / *src_dirs* as the reference un-rotated coordinates so
+    the function can be called from a loop without accumulating floating-point
+    error across frames.
+    """
+    import copy
+
+    new_cfg = copy.copy(cfg)
+    new_origins = centroid + (rot @ (src_origins - centroid).T).T
+    new_dirs = (rot @ src_dirs.T).T
+    new_vecs = []
+    for va, o, d in zip(cfg.vectors, new_origins, new_dirs):
+        nv = copy.copy(va)
+        nv.origin = o
+        nv.vector = d
+        new_vecs.append(nv)
+    new_cfg.vectors = new_vecs
+    return new_cfg
+
+
 def _compute_rotation(original_graph: nx.Graph, rotated_graph: nx.Graph) -> np.ndarray:
     """Compute 3x3 rotation matrix from original to rotated graph positions."""
     n = original_graph.number_of_nodes()
@@ -525,6 +597,19 @@ def _render_frames(
 
     total = len(frames)
     step = 360.0 / total if rotation_axis is not None else 0
+
+    # Save pre-rotation vector data (used only when rotation_axis is set).
+    _rf_vec_origins = (
+        np.array([va.origin for va in config.vectors])
+        if (config.vectors and rotation_axis is not None)
+        else None
+    )
+    _rf_vec_dirs = (
+        np.array([va.vector for va in config.vectors])
+        if (config.vectors and rotation_axis is not None)
+        else None
+    )
+
     pngs = []
     for idx, frame in enumerate(frames):
         positions = frame["positions"]
@@ -539,10 +624,21 @@ def _render_frames(
         else:
             render_graph = graph
 
+        frame_config = config
         if rotation_axis is not None:
+            # Capture centroid before rotation — same value apply_axis_angle_rotation uses.
+            _rg_nodes = list(render_graph.nodes())
+            _rg_centroid = np.mean(
+                [render_graph.nodes[n]["position"] for n in _rg_nodes], axis=0
+            )
+            rot_mat = _axis_angle_matrix(rotation_axis, rotation_sign * step * idx)
             apply_axis_angle_rotation(render_graph, rotation_axis, rotation_sign * step * idx)
+            if _rf_vec_origins is not None:
+                frame_config = _rotate_vectors_in_cfg(
+                    config, rot_mat, _rg_centroid, _rf_vec_origins, _rf_vec_dirs
+                )
 
-        svg = render_svg(render_graph, config, _log=False)
+        svg = render_svg(render_graph, frame_config, _log=False)
         pngs.append(_svg_to_png(svg, config.canvas_size))
         _progress(idx + 1, total)
     return pngs

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 if TYPE_CHECKING:
     from xyzrender.annotations import Annotation
     from xyzrender.esp import ESPSurface
@@ -136,6 +138,53 @@ def resolve_color(color: str) -> str:
 
 
 @dataclass
+class VectorArrow:
+    """A 3D vector to be drawn as an arrow in the rendered image.
+
+    Parameters
+    ----------
+    vector:
+        3-component array giving the direction and magnitude of the arrow (Å or
+        any consistent unit — the length on screen scales with the molecule).
+    origin:
+        3D origin point of the arrow tail in the same coordinate frame as atom
+        positions.  Set this after resolving ``"com"`` or atom-index origins.
+    color:
+        CSS hex color string (default ``'#444444'``).
+    label:
+        Optional text placed near the arrowhead.
+    scale:
+        Additional per-arrow length scale factor applied on top of any global
+        ``vector_scale`` setting (default 1.0).
+    """
+
+    vector: np.ndarray          # shape (3,)
+    origin: np.ndarray          # shape (3,) — resolved Cartesian position
+    color: str = "#444444"
+    label: str = ""
+    scale: float = 1.0
+    anchor: str = "tail"        # "tail" (origin = arrow tail) or "center" (origin = arrow midpoint)
+
+
+@dataclass
+class CrystalData:
+    """Periodic lattice data for crystal structure rendering.
+
+    Parameters
+    ----------
+    lattice:
+        3×3 array where each row is a lattice vector (a, b, c) in Ångströms.
+    cell_origin:
+        3-vector (Å) of the (0,0,0) cell corner in the current coordinate frame.
+        Defaults to the origin; updated during GIF rotation so the box keeps
+        pace with the atoms.
+    """
+
+    lattice: np.ndarray  # shape (3, 3), rows = a, b, c in Å
+    cell_origin: np.ndarray = field(default_factory=lambda: np.zeros(3))  # (3,) in Å
+
+
+@dataclass
 class RenderConfig:
     """Rendering settings."""
 
@@ -183,3 +232,6 @@ class RenderConfig:
     atom_cmap: dict[int, float] | None = None
     cmap_range: tuple[float, float] | None = None
     cmap_unlabeled: str = "#ffffff"  # fill for atoms absent from cmap file
+    # Arbitrary vector arrows (--vectors)
+    vectors: list[VectorArrow] = field(default_factory=list)
+    vector_scale: float = 1.0  # global length multiplier applied to all vectors

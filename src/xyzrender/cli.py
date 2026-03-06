@@ -227,6 +227,23 @@ def main() -> None:
         metavar=("VMIN", "VMAX"),
         help="Explicit colormap range (default: auto from file values)",
     )
+    annot_g.add_argument(
+        "--vectors",
+        default=None,
+        metavar="FILE",
+        help=(
+            "JSON file defining vector arrows to overlay on the image.  "
+            "Each entry: {\"origin\": \"com\"|<atom_index>|[x,y,z], "
+            "\"vector\": [vx,vy,vz], \"color\": \"#rrggbb\", \"label\": \"μ\", \"scale\": 1.0}"
+        ),
+    )
+    annot_g.add_argument(
+        "--vector-scale",
+        type=float,
+        default=None,
+        metavar="FACTOR",
+        help="Global length scale factor applied to all vector arrows (default: 1.0)",
+    )
 
     args = p.parse_args()
     from xyzrender import configure_logging
@@ -364,7 +381,6 @@ def main() -> None:
         )
     if is_cube:
         from xyzrender.io import load_cube
-
         graph, cube_data = load_cube(args.input, charge=args.charge, multiplicity=args.multiplicity, kekule=args.kekule)
     elif needs_ts and args.input:
         graph, _ts_frames = load_ts_molecule(
@@ -427,6 +443,16 @@ def main() -> None:
             p.error(str(e))
         if args.cmap_range is not None:
             cfg.cmap_range = tuple(args.cmap_range)
+
+    # Vector arrows
+    if args.vectors:
+        from xyzrender.io import load_vectors
+        try:
+            cfg.vectors = load_vectors(args.vectors, graph)
+        except (ValueError, FileNotFoundError) as e:
+            p.error(str(e))
+    if args.vector_scale is not None:
+        cfg.vector_scale = args.vector_scale
 
     # Orientation
     if args.interactive:
