@@ -47,7 +47,7 @@ def test_load_vectors_atom_origin(tmp_path):
     jf = _write_json([{"origin": 1, "vector": [0.0, 1.0, 0.0]}])
     arrows = load_vectors(jf, graph)
     assert len(arrows) == 1
-    expected = np.array(graph.nodes[list(graph.nodes())[0]]["position"])
+    expected = np.array(graph.nodes[next(iter(graph.nodes()))]["position"])
     assert np.allclose(arrows[0].origin, expected)
 
 

@@ -335,6 +335,7 @@ def render_rotation_gif(
                 config.vectors,
                 (_pca_vt @ (_o - _pca_centroid).T).T,
                 (_pca_vt @ _d.T).T,
+                strict=True,
             ):
                 nv = _cp.copy(va)
                 nv.origin = o
@@ -612,13 +613,14 @@ def _rotate_vectors_in_cfg(
     the function can be called from a loop without accumulating floating-point
     error across frames.
     """
+
     import copy
 
     new_cfg = copy.copy(cfg)
     new_origins = centroid + (rot @ (src_origins - centroid).T).T
     new_dirs = (rot @ src_dirs.T).T
     new_vecs = []
-    for va, o, d in zip(cfg.vectors, new_origins, new_dirs):
+    for va, o, d in zip(cfg.vectors, new_origins, new_dirs, strict=True):
         nv = copy.copy(va)
         nv.origin = o
         nv.vector = d
