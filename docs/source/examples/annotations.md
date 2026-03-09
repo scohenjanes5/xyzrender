@@ -82,6 +82,66 @@ xyzrender caffeine.xyz --hy --cmap caffeine_charges.txt --cmap-range -0.5 0.5
 - Atoms **not in the file**: white (`#ffffff`). Override with `"cmap_unlabeled"` in a custom JSON preset
 - Range defaults to min/max of provided values; use `--cmap-range vmin vmax` for a symmetric scale
 
+## Vector arrows
+
+Overlay arbitrary 3D vectors as arrows on the rendered image via a JSON file. Useful for dipole moments, forces, electric fields, transition vectors, etc.
+
+Each entry in the JSON array defines one arrow:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `vector` | `[vx, vy, vz]` | *required* | Three numeric components (x,y,z). Use the same coordinate units as the input (Å). |
+| `origin` | `"com"` / integer / `[x,y,z]` | `"com"` | Tail location: `"com"` = molecule centroid; integer = 1-based atom index; list = explicit coordinates. |
+| `color` | `"#rrggbb"` / named | `"#444444"` | Arrow color (hex or named). |
+| `label` | string | `""` | Text placed near the arrowhead (e.g. "μ"). |
+| `scale` | float | `1.0` | Per-arrow multiplier applied on top of `--vector-scale`. |
+
+Custom global settings can also be included at the top-level of the JSON:
+- `"anchor": "center"` makes the `origin` the midpoint of the arrow instead of the tail.
+- `"units": "string"` for documentation purposes.
+
+```bash
+xyzrender caffeine.xyz --vectors dipole.json -o caffeine_dipole.svg
+xyzrender caffeine.xyz --vectors forces.json --vector-scale 0.3 -o caffeine_forces.svg
+```
+
+**Example — Dipole Moment:**
+
+![ethanol dip gif](../../../examples/images/ethanol_dip.gif)
+
+```json
+{
+  "anchor": "center",
+  "vectors": [
+    {
+      "origin": "com",
+      "vector": [1.032, -0.043, -1.332],
+      "color": "red",
+      "label": "μ"
+    }
+  ]
+}
+```
+
+**Example — Forces on heavy atoms due to E field:**
+
+![ethanol forces gif](../../../examples/images/ethanol_forces_efield.gif)
+
+```json
+{
+  "anchor": "center",
+  "units": "eV/Angstrom",
+  "vectors": [
+    {
+      "origin": 1,
+      "vector": [-0.318, -0.438, 0.368],
+      "color": "red"
+    },
+    ...
+  ]
+}
+```
+
 ## Bond measurements (`--measure`)
 
 Print bonded distances, angles, and dihedral angles to stdout. The SVG is still rendered as normal.
