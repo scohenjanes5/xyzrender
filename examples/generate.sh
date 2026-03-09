@@ -69,4 +69,8 @@ xyzrender "$DIR/mn-h2.log" -o "$OUT/mn-h2_gif.svg" --gif-ts -go "$OUT/mn-h2.gif"
 xyzrender "$DIR/bimp.out" -o "$OUT/bimp_nci.svg" --ts --gif-trj --vdw 84-169 --nci -go "$OUT/bimp_nci_trj.gif"
 xyzrender "$DIR/bimp.out" -o "$OUT/bimp_nci.svg" --gif-ts --gif-rot --vdw 84-169 --nci -go "$OUT/bimp_nci_ts.gif"
 
+echo "=== Vector arrows ==="
+xyzrender "$DIR/ethanol.xyz" --vectors "$DIR/ethanol_dip.json" -go "$OUT/ethanol_dip.gif" --gif-rot            # dipole at center of mass, with rotation
+xyzrender "$DIR/ethanol.xyz" --hy --vectors "$DIR/ethanol_forces_efield.json" --vector-scale 1.5 -go "$OUT/ethanol_forces_efield.gif" --gif-rot  # per-atom forces, with rotation
+
 echo "Done! Outputs written to $OUT/"
