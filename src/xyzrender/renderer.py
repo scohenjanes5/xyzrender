@@ -39,8 +39,9 @@ def render_svg(graph, config: RenderConfig | None = None, *, _log: bool = True) 
     a_nums = [DATA.s2n.get(s, 0) for s in symbols]  # 0 for NCI centroid nodes ("*")
 
     # Pre-compute local vector origins/directions so we can rotate them with auto_orient
-    _vec_origins = np.array([va.origin for va in cfg.vectors], dtype=float) if cfg.vectors else None
-    _vec_dirs = np.array([va.vector for va in cfg.vectors], dtype=float) if cfg.vectors else None
+    if cfg.vectors:
+        _vec_origins = np.array([va.origin for va in cfg.vectors], dtype=float)
+        _vec_dirs = np.array([va.vector for va in cfg.vectors], dtype=float)
 
     if cfg.auto_orient and n > 1:
         # Collect TS bond pairs to prioritize in orientation
@@ -53,7 +54,7 @@ def render_svg(graph, config: RenderConfig | None = None, *, _log: bool = True) 
         fit_mask = atom_mask if not atom_mask.all() else None
         from xyzrender.utils import pca_orient
 
-        if _vec_origins is not None:
+        if cfg.vectors:
             # Capture rotation matrix so vector origins/directions transform with the molecule
             _fit = pos[fit_mask] if fit_mask is not None else pos
             _centroid = _fit.mean(axis=0)

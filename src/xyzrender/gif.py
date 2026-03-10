@@ -402,11 +402,11 @@ def render_rotation_gif(
     step = 360.0 / n_frames
     logger.info("Rendering rotation GIF (%d frames, axis=%s)", n_frames, axis)
     # Save pre-rotation vector data so each frame applies a fresh rotation (no drift).
-    _gif_vec_origins = np.array([va.origin for va in rot_cfg.vectors]) if rot_cfg.vectors else None
-    _gif_vec_dirs = np.array([va.vector for va in rot_cfg.vectors]) if rot_cfg.vectors else None
-    _gif_vec_centroid = (
-        np.mean(list(original_positions.values()), axis=0) if _gif_vec_origins is not None else None
-    )
+
+    if rot_cfg.vectors:
+        _gif_vec_origins = np.array([va.origin for va in rot_cfg.vectors])
+        _gif_vec_dirs = np.array([va.vector for va in rot_cfg.vectors])
+        _gif_vec_centroid = np.mean(list(original_positions.values()), axis=0)
 
     _mo_cache: dict = {}
     _dens_cache: dict = {}
@@ -423,7 +423,7 @@ def render_rotation_gif(
         apply_axis_angle_rotation(graph, axis_vec, total_angle)
 
         frame_cfg = rot_cfg
-        if _gif_vec_origins is not None:
+        if rot_cfg.vectors:
             rot_mat = _axis_angle_matrix(axis_vec, axis_sign * step * frame_idx)
             frame_cfg = _rotate_vectors_in_cfg(
                 rot_cfg, rot_mat, _gif_vec_centroid, _gif_vec_origins, _gif_vec_dirs
@@ -674,16 +674,10 @@ def _render_frames(
     step = 360.0 / total if rotation_axis is not None else 0
 
     # Save pre-rotation vector data (used only when rotation_axis is set).
-    _rf_vec_origins = (
-        np.array([va.origin for va in config.vectors])
-        if (config.vectors and rotation_axis is not None)
-        else None
-    )
-    _rf_vec_dirs = (
-        np.array([va.vector for va in config.vectors])
-        if (config.vectors and rotation_axis is not None)
-        else None
-    )
+
+    if config.vectors and rotation_axis is not None:
+        _rf_vec_origins = np.array([va.origin for va in config.vectors])
+        _rf_vec_dirs = np.array([va.vector for va in config.vectors])
 
     pngs = []
     for idx, frame in enumerate(frames):
@@ -708,7 +702,7 @@ def _render_frames(
             )
             rot_mat = _axis_angle_matrix(rotation_axis, rotation_sign * step * idx)
             apply_axis_angle_rotation(render_graph, rotation_axis, rotation_sign * step * idx)
-            if _rf_vec_origins is not None:
+            if config.vectors:
                 frame_config = _rotate_vectors_in_cfg(
                     config, rot_mat, _rg_centroid, _rf_vec_origins, _rf_vec_dirs
                 )
