@@ -106,14 +106,10 @@ def diffuse_frames(
 
         # Bond opacity per mode
         bond_opacities: dict[tuple[int, int], float] = {}
-        if bonds == "hide":
-            for i, j in eq_lengths:
-                if i < j:
-                    bond_opacities[(i, j)] = bond_opacities[(j, i)] = 0.0
-        elif bonds == "fade":
-            for (i, j), eq_len in eq_lengths.items():
-                if i >= j:
-                    continue
+        for (i, j), eq_len in eq_lengths.items():
+            if i < j and bonds == "hide":
+                bond_opacities[(i, j)] = bond_opacities[(j, i)] = 0.0
+            elif i < j and bonds == "fade":
                 cur_len = float(np.linalg.norm(perturbed[i] - perturbed[j]))
                 ratio = cur_len / max(eq_len, 0.1)
                 if ratio > 1.0:
