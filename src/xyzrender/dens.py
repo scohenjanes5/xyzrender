@@ -67,19 +67,16 @@ def build_density_contours(
     In mesh/wire mode, produces a single outer contour + mesh geometry instead
     of the multi-layer opacity stacking.
     """
-    n1, n2, n3 = cube.grid_shape
-    base_res = max(n1, n2, n3)
+    base_res = max(cube.grid_shape)
 
     if pos_flat_ang is None:
         pos_flat_ang = compute_grid_positions(cube)
 
     if flat_indices is None:
-        mask = cube.grid_data >= isovalue
-        flat_indices = np.flatnonzero(mask)
+        flat_indices = np.flatnonzero(cube.grid_data >= isovalue)
 
-    values_flat = cube.grid_data.ravel()
     lobe_pos = pos_flat_ang[flat_indices].copy()
-    lobe_vals = values_flat[flat_indices]
+    lobe_vals = cube.grid_data.ravel()[flat_indices]
 
     # Rotate positions
     if rot is not None:
@@ -91,94 +88,69 @@ def build_density_contours(
 
     z_depth = float(lobe_pos[:, 2].mean())
 
-    # Tight bounds from actual voxel positions (for canvas fitting)
-    vx_xmin, vx_xmax = float(lobe_pos[:, 0].min()), float(lobe_pos[:, 0].max())
-    vx_ymin, vx_ymax = float(lobe_pos[:, 1].min()), float(lobe_pos[:, 1].max())
-    vx_xpad = (vx_xmax - vx_xmin) * 0.02 + 1e-9
-    vx_ypad = (vx_ymax - vx_ymin) * 0.02 + 1e-9
-
-    # 2D projection bounds (use tight voxel bounds, not full cube grid)
+    # 2D projection bounds
     if fixed_bounds is not None:
         x_min, x_max, y_min, y_max = fixed_bounds
     else:
-        x_min = vx_xmin - vx_xpad
-        x_max = vx_xmax + vx_xpad
-        y_min = vx_ymin - vx_ypad
-        y_max = vx_ymax + vx_ypad
+        vx_xmin, vx_xmax = float(lobe_pos[:, 0].min()), float(lobe_pos[:, 0].max())
+        vx_ymin, vx_ymax = float(lobe_pos[:, 1].min()), float(lobe_pos[:, 1].max())
+        vx_xpad = (vx_xmax - vx_xmin) * 0.02 + 1e-9
+        vx_ypad = (vx_ymax - vx_ymin) * 0.02 + 1e-9
+        x_min, x_max = vx_xmin - vx_xpad, vx_xmax + vx_xpad
+        y_min, y_max = vx_ymin - vx_ypad, vx_ymax + vx_ypad
 
-    # Use a finer projection grid to avoid artifacts when the
-    # molecule is tilted relative to the cube grid axes.
+    empty_result = SurfaceContours(x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max, pos_color=color, neg_color=color)
+
     proj_res = base_res * _PROJ_MULT
-
-    # Max-intensity projection to 2D (single pass over all voxels)
     grid_2d = np.zeros((proj_res, proj_res))
     lx, ly = lobe_pos[:, 0], lobe_pos[:, 1]
+
     xi = np.clip(((lx - x_min) / (x_max - x_min) * (proj_res - 1)).astype(int), 0, proj_res - 1)
     yi = np.clip(((ly - y_min) / (y_max - y_min) * (proj_res - 1)).astype(int), 0, proj_res - 1)
     np.maximum.at(grid_2d, (yi, xi), lobe_vals)
 
-    # Crop to non-zero bounding box + blur padding
     nz_rows, nz_cols = np.nonzero(grid_2d)
     if len(nz_rows) == 0:
-        return SurfaceContours(x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max, pos_color=color, neg_color=color)
+        return empty_result
 
     pad = max(3, int(_DENS_BLUR * 4) + 1)
-    r0 = max(0, int(nz_rows.min()) - pad)
-    r1 = min(proj_res, int(nz_rows.max()) + pad + 1)
-    c0 = max(0, int(nz_cols.min()) - pad)
-    c1 = min(proj_res, int(nz_cols.max()) + pad + 1)
-    cropped = grid_2d[r0:r1, c0:c1]
+    r0, r1 = max(0, int(nz_rows.min()) - pad), min(proj_res, int(nz_rows.max()) + pad + 1)
+    c0, c1 = max(0, int(nz_cols.min()) - pad), min(proj_res, int(nz_cols.max()) + pad + 1)
 
-    # Blur (on cropped grid — much smaller than full projection)
-    blurred = np.maximum(gaussian_blur_2d(cropped, _DENS_BLUR), 0.0)
-
-    # Multi-level contour extraction on the blurred grid (before upsample).
-    # Running marching squares on the smaller grid is much faster;
-    # coordinates are scaled by _up to match the final resolution.
-    _up = max(1, UPSAMPLE_FACTOR // _PROJ_MULT + 1)
+    blurred = np.maximum(gaussian_blur_2d(grid_2d[r0:r1, c0:c1], _DENS_BLUR), 0.0)
     above = blurred[blurred > isovalue]
-    if above.size == 0:
-        return SurfaceContours(x_min=x_min, x_max=x_max, y_min=y_min, y_max=y_max, pos_color=color, neg_color=color)
 
+    if above.size == 0:
+        return empty_result
+
+    _up = max(1, UPSAMPLE_FACTOR // _PROJ_MULT + 1)
     scale_offset = np.array([r0 * _up, c0 * _up])
     res = proj_res * _up
+    layers: list[LobeContour2D] = []
+
+    def extract_loops(threshold: float):
+        raw_loops = chain_segments(marching_squares(blurred, threshold))
+        offset_loops = [lp * _up + scale_offset for lp in raw_loops]
+        return [resample_loop(lp) for lp in offset_loops if loop_perimeter(lp) >= MIN_LOOP_PERIMETER]
 
     if surface_style in ("mesh", "contour", "dot"):
-        # Single outer contour + mesh geometry instead of multi-layer stacking
-        raw_loops = chain_segments(marching_squares(blurred, float(isovalue)))
-        offset_loops = [loop * _up + scale_offset for loop in raw_loops]
-        loops = [resample_loop(lp) for lp in offset_loops if loop_perimeter(lp) >= MIN_LOOP_PERIMETER]
-        layers: list[LobeContour2D] = []
+        loops = extract_loops(float(isovalue))
         if loops:
             lc = LobeContour2D(loops=loops, phase="pos", z_depth=z_depth)
-            if surface_style in ("mesh", "contour", "dot"):
-                # Density mesh falls back to contour — nuclear cusps make
-                # field-based grid warp unusable
-                if surface_style == "mesh":
-                    logger.info("Density: mesh style not supported, using contour instead")
-                _n_iso = 15 if surface_style == "dot" else 10
-                iso_loops, _grid = extract_mesh_geometry(
-                    blurred,
-                    float(isovalue),
-                    scale_offset / _up,
-                    n_iso_levels=_n_iso,
-                    n_lines=0,
-                )
-                lc.mesh_iso_loops = [lp * _up + scale_offset for lp in iso_loops]
+            if surface_style == "mesh":
+                logger.info("Density: mesh style not supported, using contour instead")
+
+            _n_iso = 15 if surface_style == "dot" else 10
+            iso_loops, _grid = extract_mesh_geometry(
+                blurred, float(isovalue), scale_offset / _up, n_iso_levels=_n_iso, n_lines=0
+            )
+            lc.mesh_iso_loops = [lp * _up + scale_offset for lp in iso_loops]
             layers.append(lc)
     else:
         # Solid mode: multi-threshold concentric layers
-        # Use 85th percentile as upper bound to avoid nuclear-peak outliers
-        upper = float(np.percentile(above, 85))
-        upper = max(upper, isovalue * 1.5)  # ensure at least some spread
-        thresholds = np.geomspace(isovalue, upper, n_layers)
-
-        layers = []
-        for threshold in thresholds:
-            raw_loops = chain_segments(marching_squares(blurred, float(threshold)))
-            # Scale from blurred-grid coords to upsampled-grid coords + crop offset
-            offset_loops = [loop * _up + scale_offset for loop in raw_loops]
-            loops = [resample_loop(lp) for lp in offset_loops if loop_perimeter(lp) >= MIN_LOOP_PERIMETER]
+        upper = max(float(np.percentile(above, 85)), isovalue * 1.5)
+        for threshold in np.geomspace(isovalue, upper, n_layers):
+            loops = extract_loops(float(threshold))
             if loops:
                 layers.append(LobeContour2D(loops=loops, phase="pos", z_depth=z_depth))
 
